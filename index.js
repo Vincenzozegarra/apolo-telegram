@@ -1,25 +1,10 @@
 require('dotenv').config();
 const { Telegraf } = require('telegraf');
-const http = require('http');
 
-// Obtener token desde variables de entorno
-const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN || '8625177218:AAFr80e_GYkMtm4LnRHFnNMHytvdKQKth4k';
-
-if (!TELEGRAM_TOKEN) {
-  console.log('⚠️ Token no encontrado. Configúralo en las variables de entorno.');
-  process.exit(1);
-}
+// TOKEN INCLUIDO - No necesitas variables de entorno
+const TELEGRAM_TOKEN = '8625177218:AAFr80e_GYkMtm4LnRHFnNMHytvdKQKth4k';
 
 const bot = new Telegraf(TELEGRAM_TOKEN);
-
-// Configuración del puerto para Render
-const PORT = process.env.PORT || 3000;
-
-// Crear servidor simple para mantener el puerto abierto
-const server = http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('APOLO está activo\n');
-});
 
 // ============================================
 // REGLAS DE APOLO - Secretario Personal de Enzo
@@ -38,19 +23,7 @@ const APOLO_CONFIG = {
 // ============================================
 
 bot.start((ctx) => {
-  ctx.reply(`👋 Hola, soy APOLO
-Secretario personal de ${APOLO_CONFIG.ownerName}.
-
-¿En qué puedo ayudarte?
-
-📋 Comandos:
-/start - Saludo
-/agenda - Ver agenda del día
-/recordar - Agregar recordatorio
-/pendientes - Ver pendientes
-/fechas - Fechas importantes
-/moto - Revisión de moto
-/ayuda - Ver todos los comandos`);
+  ctx.reply(`👋 Hola, soy APOLO\nSecretario personal de ${APOLO_CONFIG.ownerName}.\n\n¿En qué puedo ayudarte?\n\n📋 Comandos:\n/start - Saludo\n/agenda - Ver agenda del día\n/recordar - Agregar recordatorio\n/pendientes - Ver pendientes\n/fechas - Fechas importantes\n/moto - Revisión de moto\n/ayuda - Ver todos los comandos`);
 });
 
 bot.help((ctx) => {
@@ -121,29 +94,54 @@ bot.command('configurar', (ctx) => {
   ctx.reply(`✅ *Configuración Actualizada*\n\nAhora sé que tú eres *${nombre}*`, { parse_mode: 'Markdown' });
 });
 
-// Respuestas automáticas
+// ============================================
+// RESPUESTAS AUTOMÁTICAS - Mensajes Fluidos
+// ============================================
+
 bot.on('text', (ctx) => {
   const text = ctx.message.text.toLowerCase();
+  const mensaje = ctx.message.text;
+
+  if (mensaje.startsWith('/')) {
+    return;
+  }
+
   if (text.includes('clinic') || text.includes('fucsi') || text.includes('negocio')) {
     ctx.replyWithMarkdown(`📝 *Anotado*\n\nHe tomado nota de ese tema.\n¿ quieres que te ayude con algo más relacionado a tu agenda personal?`);
     return;
   }
-  if (text.includes('apple') || text.includes('suscrib') || text.includes('netflix') || text.includes('spotify')) {
-    ctx.replyWithMarkdown(`📝 *Nota de Suscripción*\n\nHe anotado esta suscripción.\nTe recordaré verificar el pago el próximo mes para evitar bloqueos.\n\nAPOLO: Previniendo problemas ✅`);
+
+  if (text.includes('apple') || text.includes('suscrib') || text.includes('netflix') || text.includes('spotify') || text.includes('comprar') || text.includes('compra')) {
+    ctx.replyWithMarkdown(`📝 *Nota de Suscripción/Compra*\n\nHe anotado esto.\nTe recordaré verificar el pago el próximo mes para evitar bloqueos.\n\nAPOLO: Previniendo problemas ✅`);
     return;
   }
+
+  if (text.includes('harley') || text.includes('bmw') || text.includes('moto')) {
+    ctx.replyWithMarkdown(`🏍️ *Recordatorio de Moto*\n\n¿Quieres que te recuerde revisar tu moto antes de salir?\nUsa /moto harley o /moto bmw para ver los tips.`);
+    return;
+  }
+
+  if (text.includes('cumple') || text.includes('aniversario') || text.includes('sari') || text.includes('17') || text.includes('19')) {
+    ctx.replyWithMarkdown(`🎂 *Fechas Importantes*\n\n❤️ *17 de Noviembre* - Aniversario con Sari 🎉\n🎈 *19 de Diciembre* - Cumpleaños de ${APOLO_CONFIG.ownerName} 🎂\n\nAPOLO nunca olvida estas fechas ✨`);
+    return;
+  }
+
+  const respuestas = [
+    `👂 Te escucho, ${APOLO_CONFIG.ownerName}. ¿Necesitas algo relacionado a tu agenda?`,
+    `📝 Anotado. ¿Hay algo más en lo que pueda ayudarte?`,
+    `✅ ¿Te refieres a algo de tu agenda personal?`,
+    `🤔 Puedo ayudarte con recordatorios, tu agenda o tus pendientes. ¿Qué necesitas?`,
+    `📋 Estoy aquí para ayudarte. Usa /ayuda para ver lo que puedo hacer.`
+  ];
+
+  const respuestaAleatoria = respuestas[Math.floor(Math.random() * respuestas.length)];
+  ctx.reply(respuestaAleatoria);
 });
 
 // ============================================
 // INICIAR EL BOT
 // ============================================
 
-// Iniciar el servidor web (necesario para Render)
-server.listen(PORT, () => {
-  console.log(`🌐 Servidor web activo en puerto ${PORT}`);
-});
-
-// Iniciar el bot
 console.log('🚀 Iniciando APOLO en Telegram...');
 bot.launch();
 
@@ -153,12 +151,10 @@ bot.catch((err, ctx) => {
 
 process.once('SIGINT', () => {
   bot.stop('SIGINT');
-  server.close();
   console.log('🛑 APOLO detenido');
 });
 
 process.once('SIGTERM', () => {
   bot.stop('SIGTERM');
-  server.close();
   console.log('🛑 APOLO detenido');
 });
