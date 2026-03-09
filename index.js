@@ -3,7 +3,7 @@ const { Telegraf } = require('telegraf');
 const http = require('http');
 
 // Obtener token desde variables de entorno
-const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
+const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN || '8625177218:AAFr80e_GYkMtm4LnRHFnNMHytvdKQKth4k';
 
 if (!TELEGRAM_TOKEN) {
   console.log('⚠️ Token no encontrado. Configúralo en las variables de entorno.');
