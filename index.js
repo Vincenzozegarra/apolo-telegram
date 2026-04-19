@@ -1,141 +1,223 @@
 require('dotenv').config();
 const { Telegraf } = require('telegraf');
+const Anthropic = require('@anthropic-ai/sdk');
+const fs = require('fs');
+const path = require('path');
 
-// TOKEN INCLUIDO - No necesitas variables de entorno
-const TELEGRAM_TOKEN = '8625177218:AAFr80e_GYkMtm4LnRHFnNMHytvdKQKth4k';
+const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+
+if (!TELEGRAM_TOKEN || !ANTHROPIC_API_KEY) {
+  console.error('❌ Faltan variables de entorno. Copia .env.example a .env y completa los valores.');
+  process.exit(1);
+}
 
 const bot = new Telegraf(TELEGRAM_TOKEN);
+const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
 
 // ============================================
-// REGLAS DE APOLO - Secretario Personal de Enzo
+// PERSISTENCIA - Archivo JSON local
 // ============================================
 
-const APOLO_CONFIG = {
-  ownerName: "Enzo",
-  birthday: "19 de diciembre",
-  anniversary: "17 de noviembre",
-  Harley: true,
-  BMW: true
-};
+const DATA_DIR = path.join(__dirname, 'data');
+const DATA_FILE = path.join(DATA_DIR, 'apolo.json');
+
+function loadData() {
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
+  if (!fs.existsSync(DATA_FILE)) {
+    fs.writeFileSync(DATA_FILE, JSON.stringify({ pendientes: [], recordatorios: [] }));
+  }
+  return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+}
+
+function saveData(data) {
+  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+}
+
+// ============================================
+// HISTORIAL DE CONVERSACIÓN POR USUARIO
+// ============================================
+
+const conversaciones = new Map();
+
+function getHistorial(userId) {
+  if (!conversaciones.has(userId)) {
+    conversaciones.set(userId, []);
+  }
+  return conversaciones.get(userId);
+}
+
+function addMensaje(userId, role, content) {
+  const historial = getHistorial(userId);
+  historial.push({ role, content });
+  // Mantener solo los últimos 20 mensajes para no exceder tokens
+  if (historial.length > 20) historial.splice(0, historial.length - 20);
+}
+
+// ============================================
+// SYSTEM PROMPT - Personalidad de APOLO
+// ============================================
+
+function getSystemPrompt() {
+  const data = loadData();
+  const ahora = new Date().toLocaleDateString('es-ES', {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+  });
+
+  return `Eres APOLO, el secretario personal y asistente de confianza de Enzo (Vincenzo Zegarra).
+
+## Fecha actual
+${ahora}
+
+## Quién es Enzo
+- Su nombre completo es Vincenzo Zegarra, conocido como Enzo
+- Tiene pareja que se llama Sari
+- Cumpleaños de Enzo: 19 de diciembre
+- Aniversario con Sari: 17 de noviembre
+- Tiene dos motos: una Harley-Davidson y una BMW
+- Trabaja relacionado a negocios como clinic y FUCSI
+- Tiene suscripciones: Apple, Netflix, Spotify
+
+## Pendientes y recordatorios actuales
+Pendientes: ${data.pendientes.length > 0 ? data.pendientes.map((p, i) => `${i + 1}. ${p}`).join(', ') : 'ninguno por ahora'}
+Recordatorios: ${data.recordatorios.length > 0 ? data.recordatorios.map((r, i) => `${i + 1}. ${r}`).join(', ') : 'ninguno por ahora'}
+
+## Tu personalidad
+- Eres cercano, directo y eficiente — no das respuestas largas innecesarias
+- Conoces bien a Enzo y anticipas sus necesidades
+- Usas español natural y fluido
+- Puedes usar algunos emojis pero sin exagerar
+- Si Enzo menciona algo importante, lo anotas y lo recuerdas
+- Cuando detectas una tarea o pendiente en el mensaje, lo mencionas
+
+## Tus capacidades
+- Gestionar agenda, recordatorios y pendientes
+- Recordar fechas importantes
+- Dar checklists de revisión para las motos
+- Conversar con inteligencia sobre cualquier tema relevante para Enzo
+- Recordar el contexto de la conversación actual
+
+Responde siempre en español, de forma concisa y útil.`;
+}
+
+// ============================================
+// LLAMADA A CLAUDE
+// ============================================
+
+async function llamarClaude(userId, mensajeUsuario) {
+  addMensaje(userId, 'user', mensajeUsuario);
+
+  const response = await anthropic.messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 1024,
+    system: getSystemPrompt(),
+    messages: getHistorial(userId),
+  });
+
+  const respuesta = response.content[0].text;
+  addMensaje(userId, 'assistant', respuesta);
+  return respuesta;
+}
 
 // ============================================
 // COMANDOS DEL BOT
 // ============================================
 
-bot.start((ctx) => {
-  ctx.reply(`👋 Hola, soy APOLO\nSecretario personal de ${APOLO_CONFIG.ownerName}.\n\n¿En qué puedo ayudarte?\n\n📋 Comandos:\n/start - Saludo\n/agenda - Ver agenda del día\n/recordar - Agregar recordatorio\n/pendientes - Ver pendientes\n/fechas - Fechas importantes\n/moto - Revisión de moto\n/ayuda - Ver todos los comandos`);
+bot.start(async (ctx) => {
+  const respuesta = await llamarClaude(ctx.from.id, '¡Hola! Preséntate brevemente.');
+  ctx.reply(respuesta);
 });
 
 bot.help((ctx) => {
-  ctx.reply(`📚 *Comandos de APOLO*
+  ctx.replyWithMarkdown(`📚 *Comandos de APOLO*
 
 /start - Saludo
 /agenda - Ver agenda del día
 /recordar [nota] - Agregar recordatorio
-/pendientes - Ver pendientes
+/pendientes - Ver y gestionar pendientes
+/borrar [número] - Borrar un pendiente
 /fechas - Fechas importantes
-/moto harley - Revisión Harley
-/moto bmw - Revisión BMW
-/ayuda - Ver comandos
-/configurar [nombre] - Configurar tu nombre`, { parse_mode: 'Markdown' });
+/moto harley o /moto bmw - Checklist de revisión
+/limpiar - Reiniciar la conversación`);
 });
 
-bot.command('agenda', (ctx) => {
-  const now = new Date();
-  const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
-  const fecha = now.toLocaleDateString('es-ES', options);
-  ctx.replyWithMarkdown(`📅 *Agenda de Hoy*\n\n${fecha}\n\n⏰ Buenos días, ${APOLO_CONFIG.ownerName}\n¿Tienes alguna reunión o compromiso hoy?\n\n💡 Usa /recordar [tu nota] para agregar pendientes`);
+bot.command('agenda', async (ctx) => {
+  const respuesta = await llamarClaude(ctx.from.id, '¿Cómo está mi agenda hoy? Dame un resumen del día.');
+  ctx.reply(respuesta);
 });
 
-bot.command('recordar', (ctx) => {
-  const args = ctx.message.text.split(' ');
-  args.shift();
-  const reminder = args.join(' ');
-  if (!reminder) {
-    ctx.reply('⚠️ Escribe tu nota después de /recordar\nEjemplo: /recordar Comprar leche');
+bot.command('recordar', async (ctx) => {
+  const args = ctx.message.text.split(' ').slice(1).join(' ');
+  if (!args) {
+    ctx.reply('⚠️ Escribe tu nota después de /recordar\nEjemplo: /recordar Llamar al banco');
     return;
   }
-  ctx.replyWithMarkdown(`✅ *Recordatorio Agregado*\n\n"${reminder}"\n\nAnotado, ${APOLO_CONFIG.ownerName} ✍️`);
+  const data = loadData();
+  data.pendientes.push(args);
+  saveData(data);
+  const respuesta = await llamarClaude(ctx.from.id, `Acabo de agregar este pendiente: "${args}". Confírmame que lo anotaste.`);
+  ctx.reply(respuesta);
 });
 
-bot.command('pendientes', (ctx) => {
-  ctx.replyWithMarkdown(`📋 *Tus Pendientes*\n\nAún no hay pendientes guardados.\nUsa /recordar [mensaje] para agregar uno.`);
+bot.command('pendientes', async (ctx) => {
+  const data = loadData();
+  if (data.pendientes.length === 0) {
+    ctx.reply('✅ No tienes pendientes por ahora.');
+    return;
+  }
+  const lista = data.pendientes.map((p, i) => `${i + 1}. ${p}`).join('\n');
+  ctx.replyWithMarkdown(`📋 *Tus Pendientes*\n\n${lista}\n\nUsa /borrar [número] para eliminar uno.`);
 });
 
-bot.command('fechas', (ctx) => {
-  ctx.replyWithMarkdown(`🎂 *Fechas Importantes*\n\n❤️ *17 de Noviembre* - Aniversario con Sari 🎉\n🎈 *19 de Diciembre* - Cumpleaños de ${APOLO_CONFIG.ownerName} 🎂\n\nAPOLO nunca olvida estas fechas ✨`);
+bot.command('borrar', async (ctx) => {
+  const args = ctx.message.text.split(' ').slice(1).join(' ');
+  const num = parseInt(args);
+  const data = loadData();
+  if (!num || num < 1 || num > data.pendientes.length) {
+    ctx.reply(`⚠️ Número inválido. Tienes ${data.pendientes.length} pendiente(s).`);
+    return;
+  }
+  const borrado = data.pendientes.splice(num - 1, 1)[0];
+  saveData(data);
+  ctx.reply(`✅ Borrado: "${borrado}"`);
 });
 
-bot.command('moto', (ctx) => {
-  const args = ctx.message.text.split(' ');
-  args.shift();
-  const moto = args.join(' ').toLowerCase();
-  let motoNombre = '';
-  if (moto.includes('harley')) {
-    motoNombre = 'Harley-Davidson';
-  } else if (moto.includes('bmw')) {
-    motoNombre = 'BMW';
-  } else {
+bot.command('fechas', async (ctx) => {
+  const respuesta = await llamarClaude(ctx.from.id, 'Recuérdame mis fechas importantes.');
+  ctx.reply(respuesta);
+});
+
+bot.command('moto', async (ctx) => {
+  const args = ctx.message.text.split(' ').slice(1).join(' ').toLowerCase();
+  if (!args.includes('harley') && !args.includes('bmw')) {
     ctx.reply('⚠️ Especifica: /moto harley o /moto bmw');
     return;
   }
-  ctx.replyWithMarkdown(`🏍️ *Recordatorio de Moto* - ${motoNombre}\n\nAntes de salir:\n\n✅ Revisa el aceite - Nivel y estado\n🛞 Revisa las llantas - Presión y desgaste\n🌤 Revisa el clima - Condiciones de la carretera\n\n¡Que tengas un buen viaje, ${APOLO_CONFIG.ownerName}! 🛣️`);
+  const moto = args.includes('harley') ? 'Harley-Davidson' : 'BMW';
+  const respuesta = await llamarClaude(ctx.from.id, `Dame el checklist de revisión para mi ${moto} antes de salir.`);
+  ctx.reply(respuesta);
 });
 
-bot.command('configurar', (ctx) => {
-  const args = ctx.message.text.split(' ');
-  args.shift();
-  const nombre = args.join(' ');
-  if (!nombre) {
-    ctx.reply('⚠️ Escribe tu nombre después de /configurar\nEjemplo: /configurar Carlos');
-    return;
-  }
-  APOLO_CONFIG.ownerName = nombre;
-  ctx.reply(`✅ *Configuración Actualizada*\n\nAhora sé que tú eres *${nombre}*`, { parse_mode: 'Markdown' });
+bot.command('limpiar', (ctx) => {
+  conversaciones.delete(ctx.from.id);
+  ctx.reply('🧹 Conversación reiniciada. ¡Hola de nuevo!');
 });
 
 // ============================================
-// RESPUESTAS AUTOMÁTICAS - Mensajes Fluidos
+// MENSAJES DE TEXTO LIBRES → CLAUDE
 // ============================================
 
-bot.on('text', (ctx) => {
-  const text = ctx.message.text.toLowerCase();
-  const mensaje = ctx.message.text;
+bot.on('text', async (ctx) => {
+  if (ctx.message.text.startsWith('/')) return;
 
-  if (mensaje.startsWith('/')) {
-    return;
+  try {
+    await ctx.sendChatAction('typing');
+    const respuesta = await llamarClaude(ctx.from.id, ctx.message.text);
+    ctx.reply(respuesta);
+  } catch (err) {
+    console.error('❌ Error al llamar a Claude:', err.message);
+    ctx.reply('Hubo un problema al procesar tu mensaje. Intenta de nuevo.');
   }
-
-  if (text.includes('clinic') || text.includes('fucsi') || text.includes('negocio')) {
-    ctx.replyWithMarkdown(`📝 *Anotado*\n\nHe tomado nota de ese tema.\n¿ quieres que te ayude con algo más relacionado a tu agenda personal?`);
-    return;
-  }
-
-  if (text.includes('apple') || text.includes('suscrib') || text.includes('netflix') || text.includes('spotify') || text.includes('comprar') || text.includes('compra')) {
-    ctx.replyWithMarkdown(`📝 *Nota de Suscripción/Compra*\n\nHe anotado esto.\nTe recordaré verificar el pago el próximo mes para evitar bloqueos.\n\nAPOLO: Previniendo problemas ✅`);
-    return;
-  }
-
-  if (text.includes('harley') || text.includes('bmw') || text.includes('moto')) {
-    ctx.replyWithMarkdown(`🏍️ *Recordatorio de Moto*\n\n¿Quieres que te recuerde revisar tu moto antes de salir?\nUsa /moto harley o /moto bmw para ver los tips.`);
-    return;
-  }
-
-  if (text.includes('cumple') || text.includes('aniversario') || text.includes('sari') || text.includes('17') || text.includes('19')) {
-    ctx.replyWithMarkdown(`🎂 *Fechas Importantes*\n\n❤️ *17 de Noviembre* - Aniversario con Sari 🎉\n🎈 *19 de Diciembre* - Cumpleaños de ${APOLO_CONFIG.ownerName} 🎂\n\nAPOLO nunca olvida estas fechas ✨`);
-    return;
-  }
-
-  const respuestas = [
-    `👂 Te escucho, ${APOLO_CONFIG.ownerName}. ¿Necesitas algo relacionado a tu agenda?`,
-    `📝 Anotado. ¿Hay algo más en lo que pueda ayudarte?`,
-    `✅ ¿Te refieres a algo de tu agenda personal?`,
-    `🤔 Puedo ayudarte con recordatorios, tu agenda o tus pendientes. ¿Qué necesitas?`,
-    `📋 Estoy aquí para ayudarte. Usa /ayuda para ver lo que puedo hacer.`
-  ];
-
-  const respuestaAleatoria = respuestas[Math.floor(Math.random() * respuestas.length)];
-  ctx.reply(respuestaAleatoria);
 });
 
 // ============================================
@@ -145,16 +227,9 @@ bot.on('text', (ctx) => {
 console.log('🚀 Iniciando APOLO en Telegram...');
 bot.launch();
 
-bot.catch((err, ctx) => {
-  console.log('❌ Error:', err);
+bot.catch((err) => {
+  console.error('❌ Error del bot:', err);
 });
 
-process.once('SIGINT', () => {
-  bot.stop('SIGINT');
-  console.log('🛑 APOLO detenido');
-});
-
-process.once('SIGTERM', () => {
-  bot.stop('SIGTERM');
-  console.log('🛑 APOLO detenido');
-});
+process.once('SIGINT', () => { bot.stop('SIGINT'); console.log('🛑 APOLO detenido'); });
+process.once('SIGTERM', () => { bot.stop('SIGTERM'); console.log('🛑 APOLO detenido'); });
