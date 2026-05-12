@@ -1,0 +1,7 @@
+services:
+  apolo-bot:
+    build: .
+    container_name: apolo-telegram
+    restart: unless-stopped
+    env_file:
+      - .env

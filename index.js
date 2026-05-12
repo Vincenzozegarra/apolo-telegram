@@ -1,8 +1,11 @@
 require('dotenv').config();
 const { Telegraf } = require('telegraf');
 
-// TOKEN INCLUIDO - No necesitas variables de entorno
-const TELEGRAM_TOKEN = '8625177218:AAFr80e_GYkMtm4LnRHFnNMHytvdKQKth4k';
+const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
+if (!TELEGRAM_TOKEN) {
+  console.error('❌ Falta TELEGRAM_TOKEN en las variables de entorno');
+  process.exit(1);
+}
 
 const bot = new Telegraf(TELEGRAM_TOKEN);
 
